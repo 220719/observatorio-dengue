@@ -21,32 +21,33 @@ Este projeto constrói um **pipeline de dados reprodutível** para testar essa h
 
 ## Arquitetura
 
-┌────────────────────┐
-            │   InfoDengue API   │  (7 municípios da RMM)
-            └─────────┬──────────┘
-                      │
-                      ▼
-            ┌────────────────────┐         ┌────────────────────┐
-            │  etl/infodengue.py │         │  etl/openmeteo.py  │
-            └─────────┬──────────┘         └─────────┬──────────┘
-                      │                              │
-                      ▼                              ▼
-            ┌────────────────────┐         ┌────────────────────┐
-            │     dengue_raw     │         │ clima_diario +     │
-            │     (DuckDB)       │         │ clima_semanal      │
-            └─────────┬──────────┘         └─────────┬──────────┘
-                      │                              │
-                      └──────────────┬───────────────┘
-                                     ▼
-                        ┌────────────────────────┐
-                        │ features/cruzamento.py │
-                        │   (lag temporal)       │
-                        └───────────┬────────────┘
-                                    ▼
-                        ┌────────────────────────┐
-                        │   Análise & ML         │
-                        │   (Onda 2 e Onda 3)    │
-                        └────────────────────────┘
+```mermaid
+flowchart TD
+    A[("InfoDengue API<br/>7 municípios")]
+    B[("Open-Meteo API<br/>clima diário")]
+
+    A -->|coleta semanal| C["etl/infodengue.py"]
+    B -->|coleta diária| D["etl/openmeteo.py"]
+
+    C --> E[("dengue_raw<br/>DuckDB")]
+    D --> F[("clima_diario<br/>DuckDB")]
+    D --> G[("clima_semanal<br/>DuckDB<br/>agregado por epi-week")]
+
+    E --> H["features/cruzamento.py<br/>lag temporal configurável"]
+    G --> H
+
+    H --> I["Análise estatística<br/>correlações + EDA"]
+    H --> J["Onda 2: Earth Engine<br/>NDVI, NDWI, LST, NDBI"]
+    H --> K["Onda 3: Modelos preditivos<br/>RF / XGBoost"]
+
+    style A fill:#e1f5ff,stroke:#0277bd
+    style B fill:#e1f5ff,stroke:#0277bd
+    style E fill:#fff3e0,stroke:#e65100
+    style F fill:#fff3e0,stroke:#e65100
+    style G fill:#fff3e0,stroke:#e65100
+    style J fill:#f3e5f5,stroke:#6a1b9a,stroke-dasharray: 5 5
+    style K fill:#f3e5f5,stroke:#6a1b9a,stroke-dasharray: 5 5
+```
 
 ## Como funciona
 
