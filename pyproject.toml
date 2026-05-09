@@ -61,7 +61,12 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "RUF001",  # Permite caracteres unicode em strings (× — etc.)
+    "RUF002",  # Permite caracteres unicode em docstrings
+]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
+[tool.ruff.format]
+# Formatter padrão (similar ao Black, mas mais rápido)
+quote-style = "double"
+indent-style = "space"
