@@ -1,0 +1,180 @@
+# Observatório Dengue × Clima — Maringá
+
+> Pipeline analítico integrando dados epidemiológicos do InfoDengue, dados climáticos do Open-Meteo e (Onda 2) sensoriamento remoto via Google Earth Engine — para investigar a dinâmica da dengue na região metropolitana de Maringá, PR.
+
+🇧🇷 **Português** (você está aqui) · [🇬🇧 English](./README.en.md) *(em breve)*
+
+---
+
+![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
+![Tests](https://img.shields.io/badge/tests-44%20passing-brightgreen.svg)
+![License](https://img.shields.io/badge/license-MIT-yellow.svg)
+![Code style](https://img.shields.io/badge/code%20style-ruff-000000.svg)
+
+## Visão geral
+
+Maringá-PR e a região metropolitana enfrentam epidemias recorrentes de dengue. A literatura epidemiológica sugere que **fatores climáticos com defasagem de 3–5 semanas** (precipitação, temperatura, umidade) são preditores razoáveis da incidência de casos — refletindo o ciclo de desenvolvimento do *Aedes aegypti* somado ao período de incubação da doença.
+
+Este projeto constrói um **pipeline de dados reprodutível** para testar essa hipótese sistematicamente, usando exclusivamente fontes abertas. A primeira onda integra dengue + clima; a segunda adicionará sensoriamento remoto (NDVI, NDWI, LST, NDBI) por bairro; a terceira treinará modelos preditivos de risco.
+
+**Status atual:** Onda 1 em curso (5 de 8 etapas concluídas), com pipeline ETL funcional e cruzamento dengue × clima validado contra dados reais de Maringá em 2024.
+
+## Arquitetura
+
+┌────────────────────┐
+            │   InfoDengue API   │  (7 municípios da RMM)
+            └─────────┬──────────┘
+                      │
+                      ▼
+            ┌────────────────────┐         ┌────────────────────┐
+            │  etl/infodengue.py │         │  etl/openmeteo.py  │
+            └─────────┬──────────┘         └─────────┬──────────┘
+                      │                              │
+                      ▼                              ▼
+            ┌────────────────────┐         ┌────────────────────┐
+            │     dengue_raw     │         │ clima_diario +     │
+            │     (DuckDB)       │         │ clima_semanal      │
+            └─────────┬──────────┘         └─────────┬──────────┘
+                      │                              │
+                      └──────────────┬───────────────┘
+                                     ▼
+                        ┌────────────────────────┐
+                        │ features/cruzamento.py │
+                        │   (lag temporal)       │
+                        └───────────┬────────────┘
+                                    ▼
+                        ┌────────────────────────┐
+                        │   Análise & ML         │
+                        │   (Onda 2 e Onda 3)    │
+                        └────────────────────────┘
+
+## Como funciona
+
+**1. Coleta de dengue (InfoDengue API).** Dados semanais de 7 municípios da região (Maringá, Sarandi, Paiçandu, Mandaguari, Marialva, Mandaguaçu, Astorga), no período 2020–2025. Casos notificados e estimados (com nowcasting), nível de alerta e incidência.
+
+**2. Coleta de clima (Open-Meteo Archive API).** Dados diários do reanálise ERA5 nas coordenadas de Maringá: temperatura média/máxima/mínima, precipitação acumulada e umidade relativa.
+
+**3. Agregação semanal.** Dados climáticos diários são agregados para semanas epidemiológicas (ISO 8601) usando a biblioteca `epiweeks`, que respeita anos com 53 semanas. Agregações apropriadas por variável: chuva é somada, demais variáveis usam média.
+
+**4. Persistência.** Tudo é gravado em **DuckDB** (banco analítico embutido) em três tabelas: `dengue_raw`, `clima_diario`, `clima_semanal`. Queries SQL ad-hoc disponíveis via função `carregar()`.
+
+**5. Cruzamento com lag.** Dengue e clima são unidos por `(ano_epi, semana_epi)` aplicando defasagem temporal configurável (default: 4 semanas). O lag é calculado com `epiweeks` para que a virada de ano respeite o calendário ISO real.
+
+## Exemplo de resultado
+
+Dengue de Maringá em 2024 cruzado com clima das 4 semanas anteriores:
+
+| ano_epi | semana_epi | casos | temperatura_média_lag4 (°C) | chuva_lag4 (mm) | umidade_lag4 (%) |
+|--------:|-----------:|------:|----------------------------:|----------------:|-----------------:|
+|   2024  |          5 | 1.144 |                       26,66 |             6,4 |             63,9 |
+|   2024  |          6 | 1.430 |                       27,36 |            22,8 |             68,1 |
+|   2024  |          7 | 1.630 |                       26,27 |            49,8 |             79,3 |
+|   2024  |          8 | 1.823 |                       21,86 |            32,4 |             75,7 |
+|   2024  |          9 | 1.867 |                       26,24 |             0,9 |             60,0 |
+|   2024  |         10 | 2.112 |                       27,77 |             7,1 |             60,7 |
+
+Cada linha mostra os casos observados em uma semana, junto com o clima de 4 semanas antes. O padrão sugere que **chuva acumulada e umidade alta nas semanas 3–5 da temporada precedem o pico de casos das semanas 7–10** — consistente com o ciclo de desenvolvimento do vetor.
+
+## Stack técnica
+
+**Núcleo:**
+- Python 3.12, [`uv`](https://docs.astral.sh/uv/) (gerenciamento de dependências)
+- [`pydantic`](https://docs.pydantic.dev/) + [`pydantic-settings`](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) (config tipada)
+- [`duckdb`](https://duckdb.org/) (banco analítico embutido)
+- [`pandas`](https://pandas.pydata.org/), [`polars`](https://pola.rs/) (DataFrames)
+- [`epiweeks`](https://epiweeks.readthedocs.io/) (semanas epidemiológicas ISO 8601)
+- [`requests`](https://requests.readthedocs.io/) (HTTP), [`loguru`](https://loguru.readthedocs.io/) (logging)
+
+**Qualidade:**
+- [`pytest`](https://docs.pytest.org/) (44 testes unitários e de integração)
+- [`ruff`](https://docs.astral.sh/ruff/) (lint + format)
+- [`mypy`](https://mypy.readthedocs.io/) (type checking estático)
+
+**Onda 2 (planejada):**
+- [`earthengine-api`](https://developers.google.com/earth-engine), [`geemap`](https://geemap.org/), [`geopandas`](https://geopandas.org/), [`rasterio`](https://rasterio.readthedocs.io/)
+
+**Onda 3 (planejada):**
+- [`scikit-learn`](https://scikit-learn.org/), [`xgboost`](https://xgboost.readthedocs.io/), [`shap`](https://shap.readthedocs.io/)
+
+## Setup local
+
+**Requisitos:** Python 3.12+, [`uv`](https://docs.astral.sh/uv/getting-started/installation/), Git.
+
+```bash
+# Clonar
+git clone https://github.com/220719/observatorio-dengue.git
+cd observatorio-dengue
+
+# Instalar dependências (cria .venv automaticamente)
+uv sync --all-extras
+uv pip install -e .
+
+# Rodar testes
+uv run pytest -v
+
+# Smoke test do pipeline completo (chama APIs reais)
+uv run python -c "
+from datetime import date
+from observatorio_dengue.config import dengue_config
+from observatorio_dengue.etl.database import criar_schema, salvar_dengue
+from observatorio_dengue.etl.infodengue import coletar_municipio
+criar_schema()
+df = coletar_municipio(geocode=4115200, nome_municipio='Maringá', ano_inicio=2024, ano_fim=2024)
+salvar_dengue(df)
+print(f'{len(df)} semanas de Maringá 2024 inseridas no DuckDB')
+"
+```
+
+## Estrutura do projeto       
+
+## Roadmap
+
+### ✅ Onda 1 — Núcleo dengue × clima (em curso)
+
+- [x] Setup do ambiente (WSL2, Python 3.12, uv, VS Code)
+- [x] Configuração tipada com Pydantic
+- [x] Coleta InfoDengue (`etl/infodengue.py`)
+- [x] Coleta Open-Meteo + agregação semanal (`etl/openmeteo.py`)
+- [x] Persistência em DuckDB (`etl/database.py`)
+- [x] Cruzamento com lag temporal (`features/cruzamento.py`)
+- [ ] Análise de correlação Pearson
+- [ ] Notebook de exploração reproduzindo o trabalho original
+
+### 🚧 Onda 2 — Sensoriamento remoto (planejada)
+
+- [ ] Setup Google Earth Engine
+- [ ] Shapefile de bairros de Maringá
+- [ ] Extração de NDVI, NDWI, MNDWI, LST, NDBI por bairro
+- [ ] Tabela `satelite_bairro_semanal`
+- [ ] Mapas choropleth de risco
+
+### 🔮 Onda 3 — Modelo preditivo (planejada)
+
+- [ ] Engenharia de features (lags múltiplos, indicadores temporais)
+- [ ] Random Forest / XGBoost com validação temporal
+- [ ] Análise SHAP de importância de features
+- [ ] Dashboard Streamlit com previsão de risco
+
+## Sobre o autor
+
+**Anuar Mincache** · Doutor em Física da Matéria Condensada · Cientista de Dados
+
+Pesquisador com formação em pesquisa quantitativa rigorosa (refinamento Rietveld de perovskitas multiferróicas, difração de raios X e nêutrons), aplicando essa base técnica para problemas de saúde pública, dados governamentais e ciência de dados aplicada ao Brasil.
+
+**Vínculos institucionais:**
+- Universidade Estadual de Maringá (UEM)
+- Centro Universitário Ingá (UNINGA)
+
+**Contato:**
+- LinkedIn: [anuar-mincache](https://www.linkedin.com/in/anuar-mincache/)
+- GitHub: [@220719](https://github.com/220719)
+- ORCID: [0000-0001-8528-8020](https://orcid.org/0000-0001-8528-8020)
+- Email: [ajmincache2@uem.br](mailto:ajmincache2@uem.br)
+
+## Licença
+
+Este projeto é distribuído sob a [Licença MIT](./LICENSE) — você pode usar, modificar, distribuir e usar comercialmente, desde que mantenha o aviso de copyright e a licença.
+
+---
+
+*Projeto em desenvolvimento ativo. Issues, sugestões e críticas técnicas são bem-vindas.*
