@@ -7,7 +7,7 @@
 ---
 
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
-![Tests](https://img.shields.io/badge/tests-44%20passing-brightgreen.svg)
+![Tests](https://img.shields.io/badge/tests-59%20passing-brightgreen.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
 ![Code style](https://img.shields.io/badge/code%20style-ruff-000000.svg)
 
@@ -17,7 +17,7 @@ Maringá-PR e a região metropolitana enfrentam epidemias recorrentes de dengue.
 
 Este projeto constrói um **pipeline de dados reprodutível** para testar essa hipótese sistematicamente, usando exclusivamente fontes abertas. A primeira onda integra dengue + clima; a segunda adicionará sensoriamento remoto (NDVI, NDWI, LST, NDBI) por bairro; a terceira treinará modelos preditivos de risco.
 
-**Status atual:** Onda 1 em curso (5 de 8 etapas concluídas), com pipeline ETL funcional e cruzamento dengue × clima validado contra dados reais de Maringá em 2024.
+**Status atual:** Onda 1 ✅ concluída — pipeline completo de coleta, persistência, cruzamento e análise de correlações Pearson/Spearman, validado contra dados reais de Maringá em 2024.
 
 ## Arquitetura
 
@@ -36,7 +36,8 @@ flowchart TD
     E --> H["features/cruzamento.py<br/>lag temporal configurável"]
     G --> H
 
-    H --> I["Análise estatística<br/>correlações + EDA"]
+    H --> I["features/correlacoes.py<br/>Pearson + Spearman<br/>varredura de lags"]
+    I --> L[("CSV de resultados<br/>matriz lag × variável")]
     H --> J["Onda 2: Earth Engine<br/>NDVI, NDWI, LST, NDBI"]
     H --> K["Onda 3: Modelos preditivos<br/>RF / XGBoost"]
 
@@ -45,6 +46,8 @@ flowchart TD
     style E fill:#fff3e0,stroke:#e65100
     style F fill:#fff3e0,stroke:#e65100
     style G fill:#fff3e0,stroke:#e65100
+    style I fill:#e8f5e9,stroke:#2e7d32
+    style L fill:#fff3e0,stroke:#e65100
     style J fill:#f3e5f5,stroke:#6a1b9a,stroke-dasharray: 5 5
     style K fill:#f3e5f5,stroke:#6a1b9a,stroke-dasharray: 5 5
 ```
@@ -75,6 +78,30 @@ Dengue de Maringá em 2024 cruzado com clima das 4 semanas anteriores:
 |   2024  |         10 | 2.112 |                       27,77 |             7,1 |             60,7 |
 
 Cada linha mostra os casos observados em uma semana, junto com o clima de 4 semanas antes. O padrão sugere que **chuva acumulada e umidade alta nas semanas 3–5 da temporada precedem o pico de casos das semanas 7–10** — consistente com o ciclo de desenvolvimento do vetor.
+
+## Resultados preliminares (Maringá, 2024)
+
+A varredura sistemática de defasagens (lags 0 a 8 semanas) usando `features/correlacoes.py` revela quais variáveis climáticas melhor antecipam a incidência de dengue. Os resultados abaixo correspondem a 52 semanas epidemiológicas de 2024:
+
+| Variável climática | Método | Lag ótimo | r | p-valor | n |
+|---|:---:|:---:|:---:|:---:|:---:|
+| `temperature_2m_min` | Pearson | **6 sem** | **0,593** | < 0,001 | 46 |
+| `relative_humidity_2m_mean` | Spearman | **8 sem** | **0,560** | < 0,001 | 44 |
+| `relative_humidity_2m_mean` | Pearson | 4 sem | 0,471 | 0,0007 | 48 |
+| `temperature_2m_max` | Pearson | 7 sem | 0,350 | 0,018 | 45 |
+| `precipitation_sum` | Pearson | 4 sem | 0,288 | 0,047 | 48 |
+
+**Três achados:**
+
+1. **Temperatura mínima é o melhor preditor linear** (r ≈ 0,59 em lag 6 semanas). Coerente com a biologia do *Aedes aegypti*: noites quentes aceleram o desenvolvimento larval e adulto — uma noite fria mata mosquitos, mas uma média alta com noites frias não compensa.
+
+2. **Umidade tem efeito não-linear monotônico.** Spearman lag 8 (0,56) > Pearson lag 8 (0,42), indicando saturação ou efeito limiar — sinal a ser explorado na Onda 3 com transformações ou modelos não-lineares.
+
+3. **Precipitação total é proxy fraco** (|r| < 0,3). O que provavelmente importa não é chuva acumulada, mas **regularidade e criadouros persistentes** — motivo para feature engineering futuro (chuva de N semanas anteriores, dias com chuva > 5 mm, etc).
+
+A janela de antecedência de 6–8 semanas é compatível com o uso operacional do modelo: tempo suficiente para mobilização de resposta sanitária pela prefeitura.
+
+> Reprodução: `uv run python scripts/smoke_correlacoes.py` — recoleta clima 2024, roda toda a varredura e salva `data/processed/correlacoes_maringa_2024.csv`.
 
 ## Stack técnica
 
@@ -138,8 +165,9 @@ print(f'{len(df)} semanas de Maringá 2024 inseridas no DuckDB')
 - [x] Coleta Open-Meteo + agregação semanal (`etl/openmeteo.py`)
 - [x] Persistência em DuckDB (`etl/database.py`)
 - [x] Cruzamento com lag temporal (`features/cruzamento.py`)
-- [ ] Análise de correlação Pearson
+- [x] Análise de correlação Pearson + Spearman com varredura de lags (`features/correlacoes.py`)
 - [ ] Notebook de exploração reproduzindo o trabalho original
+- [ ] Heatmap de correlações (lag × variável) para `reports/`
 
 ### 🚧 Onda 2 — Sensoriamento remoto (planejada)
 
