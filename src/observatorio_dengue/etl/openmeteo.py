@@ -138,14 +138,27 @@ def agregar_para_semana_epidemiologica(df_diario: pd.DataFrame) -> pd.DataFrame:
     df["ano_epi"] = epi_info.apply(lambda x: x[0])
     df["semana_epi"] = epi_info.apply(lambda x: x[1])
 
-    agregacoes = {
-        "temperature_2m_mean": "mean",
-        "temperature_2m_max": "mean",
-        "temperature_2m_min": "mean",
+    # Mapeamentos especiais: colunas onde a agregação NÃO é média.
+    # 'precipitation_sum' precisa ser somado (acumulado semanal).
+    # 'data' é contado para gerar 'dias_validos'.
+    agregacoes_especiais = {
         "precipitation_sum": "sum",
-        "relative_humidity_2m_mean": "mean",
         "data": "count",
     }
+
+    # Para qualquer outra coluna numérica (clima, NDVI, LST, etc),
+    # o default é média. Isso permite estender o pipeline para satélite
+    # sem precisar modificar esta função.
+    agregacoes = {}
+    for col in df.columns:
+        if col in {"ano_epi", "semana_epi"}:
+            continue
+        if col in agregacoes_especiais:
+            agregacoes[col] = agregacoes_especiais[col]
+        elif pd.api.types.is_numeric_dtype(df[col]):
+            agregacoes[col] = "mean"
+        elif col == "data":
+            agregacoes[col] = "count"
 
     agregacoes = {k: v for k, v in agregacoes.items() if k in df.columns}
 
