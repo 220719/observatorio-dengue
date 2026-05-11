@@ -19,6 +19,7 @@ dependencies = [
     "loguru>=0.7",
     "epiweeks>=2.3",
     "scipy>=1.17.1",
+    "earthengine-api>=1.7.25",
 ]
 
 [project.optional-dependencies]

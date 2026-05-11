@@ -2360,6 +2360,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
+    { name = "earthengine-api" },
     { name = "epiweeks" },
     { name = "loguru" },
     { name = "pandas" },
@@ -2403,6 +2404,7 @@ viz = [
 [package.metadata]
 requires-dist = [
     { name = "duckdb", specifier = ">=1.1" },
+    { name = "earthengine-api", specifier = ">=1.7.25" },
     { name = "earthengine-api", marker = "extra == 'gee'", specifier = ">=1.0" },
     { name = "epiweeks", specifier = ">=2.3" },
     { name = "folium", marker = "extra == 'viz'", specifier = ">=0.18" },
