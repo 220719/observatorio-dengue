@@ -20,6 +20,7 @@ dependencies = [
     "epiweeks>=2.3",
     "scipy>=1.17.1",
     "earthengine-api>=1.7.25",
+    "scikit-learn>=1.8.0",
 ]
 
 [project.optional-dependencies]
