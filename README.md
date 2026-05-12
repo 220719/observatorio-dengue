@@ -1,163 +1,212 @@
 # Observatório Dengue × Clima — Maringá
 
-> Pipeline analítico integrando dados epidemiológicos do InfoDengue, dados climáticos do Open-Meteo e (Onda 2) sensoriamento remoto via Google Earth Engine — para investigar a dinâmica da dengue na região metropolitana de Maringá, PR.
+> Pipeline analítico end-to-end: coleta automatizada de dados epidemiológicos, climáticos e de sensoriamento remoto, análise de correlação com defasagem temporal, e modelo preditivo de dengue — aplicado à região de Maringá-PR (2020–2025).
 
 🇧🇷 **Português** (você está aqui) · [🇬🇧 English](./README.en.md) *(em breve)*
 
 ---
 
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
-![Tests](https://img.shields.io/badge/tests-59%20passing-brightgreen.svg)
+![Tests](https://img.shields.io/badge/tests-73%20passing-brightgreen.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
 ![Code style](https://img.shields.io/badge/code%20style-ruff-000000.svg)
+![Data](https://img.shields.io/badge/dados-314%20semanas-orange.svg)
+![Model](https://img.shields.io/badge/R²-0.885-success.svg)
 
 ## Visão geral
 
-Maringá-PR e a região metropolitana enfrentam epidemias recorrentes de dengue. A literatura epidemiológica sugere que **fatores climáticos com defasagem de 3–5 semanas** (precipitação, temperatura, umidade) são preditores razoáveis da incidência de casos — refletindo o ciclo de desenvolvimento do *Aedes aegypti* somado ao período de incubação da doença.
+Maringá-PR enfrenta epidemias recorrentes de dengue com picos sazonais marcantes. A literatura epidemiológica sugere que fatores climáticos com defasagem temporal (precipitação, temperatura, umidade) são preditores da incidência de casos, refletindo o ciclo de desenvolvimento do *Aedes aegypti* somado ao período de incubação da doença.
 
-Este projeto constrói um **pipeline de dados reprodutível** para testar essa hipótese sistematicamente, usando exclusivamente fontes abertas. A primeira onda integra dengue + clima; a segunda adicionará sensoriamento remoto (NDVI, NDWI, LST, NDBI) por bairro; a terceira treinará modelos preditivos de risco.
+Este projeto constrói um **pipeline de dados reprodutível** que:
 
-**Status atual:** Onda 1 ✅ concluída — pipeline completo de coleta, persistência, cruzamento e análise de correlações Pearson/Spearman, validado contra dados reais de Maringá em 2024.
+1. **Coleta** dados de 3 fontes abertas (InfoDengue, Open-Meteo ERA5, Google Earth Engine MODIS)
+2. **Cruza** dengue × clima × satélite com defasagem temporal configurável
+3. **Valida** estatisticamente quais variáveis são preditores independentes
+4. **Prevê** incidência semanal com Random Forest, superando o baseline em 27.5%
+
+**Período:** 314 semanas epidemiológicas (2020–2025) · **Resolução:** semanal · **Município:** Maringá-PR (IBGE 4115200)
+
+## Principais resultados
+
+### Modelo preditivo (Random Forest, walk-forward validation)
+
+| Métrica | Baseline (Média Móvel 4 sem) | Random Forest |
+|---|:---:|:---:|
+| MAE | 26.5 | **19.2** |
+| RMSE | 46.1 | **38.6** |
+| R² | 0.835 | **0.885** |
+| MAPE | 37.1% | **25.6%** |
+
+O Random Forest supera o baseline de média móvel em **todos os anos** do período de validação (2021–2025), com ganho de 27.5% no erro absoluto médio.
+
+### Correlações clima × dengue (Spearman, 314 semanas)
+
+| Variável | Fonte | Lag ótimo | ρ | p-valor |
+|---|---|:---:|:---:|:---:|
+| LST Noturna | MODIS (satélite) | 8 sem | **0.540** | < 10⁻²³ |
+| Temp. Mínima | ERA5 (clima) | 8 sem | **0.519** | < 10⁻²² |
+| Temp. Média | ERA5 (clima) | 8 sem | 0.408 | < 10⁻¹³ |
+| NDVI | MODIS (satélite) | 6 sem | 0.388 | < 10⁻¹² |
+| Umid. Relativa | ERA5 (clima) | 8 sem | 0.333 | < 10⁻⁹ |
+| Precipitação | ERA5 (clima) | 8 sem | 0.251 | < 10⁻⁵ |
+
+### Validação das features (correlação parcial e VIF)
+
+| Feature | Parcial (controlando as outras) | VIF | Decisão |
+|---|:---:|:---:|---|
+| Temp. Mínima (ERA5) | r = 0.489, p < 0.001 | 7.8 | ✅ Incluída |
+| NDVI (MODIS) | r = 0.327, p < 0.001 | 1.0 | ✅ Incluída |
+| LST Noturna (MODIS) | r = 0.039, p = 0.505 | 7.8 | ❌ Descartada (redundante com temp. mínima) |
+
+A temperatura mínima e o NDVI contribuem de forma **independente** para a predição de dengue. A LST noturna, apesar de forte correlação bivariada, é redundante com a temperatura mínima (VIF = 7.8, correlação parcial não significativa).
+
+### Importância das features no modelo final
+
+| Feature | Tipo | Importância (Gini) |
+|---|---|:---:|
+| Casos semana anterior | Autorregressiva | 0.976 |
+| Temp. Mínima (lag 8) | Clima ERA5 | 0.006 |
+| NDVI (lag 8) | Satélite MODIS | 0.002 |
+| Casos 2–4 sem. atrás | Autorregressiva | 0.016 |
+
+No curto prazo (1 semana), a autocorrelação dos casos domina. As features climáticas contribuem marginalmente mas são mantidas por: (a) ganho estatístico real no R², (b) relevância epidemiológica, (c) potencial para previsão de médio prazo (4–8 semanas) onde a autocorrelação perde poder.
 
 ## Arquitetura
 
 ```mermaid
 flowchart TD
-    A[("InfoDengue API<br/>7 municípios")]
-    B[("Open-Meteo API<br/>clima diário")]
+    A[("InfoDengue API<br/>dengue semanal")]
+    B[("Open-Meteo API<br/>ERA5 diário")]
+    C[("Google Earth Engine<br/>MODIS NDVI + LST")]
 
-    A -->|coleta semanal| C["etl/infodengue.py"]
-    B -->|coleta diária| D["etl/openmeteo.py"]
+    A -->|coleta semanal| D["etl/infodengue.py"]
+    B -->|coleta diária| E["etl/openmeteo.py"]
+    C -->|compostos 8-16d| F["etl/gee.py"]
 
-    C --> E[("dengue_raw<br/>DuckDB")]
-    D --> F[("clima_diario<br/>DuckDB")]
-    D --> G[("clima_semanal<br/>DuckDB<br/>agregado por epi-week")]
+    D --> G[("dengue_raw<br/>DuckDB")]
+    E --> H[("clima_diario<br/>clima_semanal<br/>DuckDB")]
+    F --> I[("satelite_municipio_semanal<br/>DuckDB")]
 
-    E --> H["features/cruzamento.py<br/>lag temporal configurável"]
-    G --> H
+    G --> J["features/cruzamento.py<br/>lag temporal configurável"]
+    H --> J
+    I --> J
 
-    H --> I["features/correlacoes.py<br/>Pearson + Spearman<br/>varredura de lags"]
-    I --> L[("CSV de resultados<br/>matriz lag × variável")]
-    H --> J["Onda 2: Earth Engine<br/>NDVI, NDWI, LST, NDBI"]
-    H --> K["Onda 3: Modelos preditivos<br/>RF / XGBoost"]
+    J --> K["features/correlacoes.py<br/>Pearson + Spearman<br/>varredura de lags 0–8"]
+
+    J --> L["modelagem_onda3.py<br/>Random Forest<br/>walk-forward validation"]
+
+    K --> M[("CSVs de correlações<br/>+ correlação parcial<br/>+ VIF")]
+    L --> N[("previsões + métricas<br/>R²=0.885, MAE=19.2")]
+
+    N --> O["notebooks/<br/>visualizacoes_artigo.ipynb<br/>7 figuras 300dpi"]
 
     style A fill:#e1f5ff,stroke:#0277bd
     style B fill:#e1f5ff,stroke:#0277bd
-    style E fill:#fff3e0,stroke:#e65100
-    style F fill:#fff3e0,stroke:#e65100
+    style C fill:#e1f5ff,stroke:#0277bd
     style G fill:#fff3e0,stroke:#e65100
-    style I fill:#e8f5e9,stroke:#2e7d32
-    style L fill:#fff3e0,stroke:#e65100
-    style J fill:#f3e5f5,stroke:#6a1b9a,stroke-dasharray: 5 5
-    style K fill:#f3e5f5,stroke:#6a1b9a,stroke-dasharray: 5 5
+    style H fill:#fff3e0,stroke:#e65100
+    style I fill:#fff3e0,stroke:#e65100
+    style K fill:#e8f5e9,stroke:#2e7d32
+    style L fill:#e8f5e9,stroke:#2e7d32
+    style M fill:#fff3e0,stroke:#e65100
+    style N fill:#fff3e0,stroke:#e65100
+    style O fill:#f3e5f5,stroke:#6a1b9a
 ```
 
 ## Como funciona
 
-**1. Coleta de dengue (InfoDengue API).** Dados semanais de 7 municípios da região (Maringá, Sarandi, Paiçandu, Mandaguari, Marialva, Mandaguaçu, Astorga), no período 2020–2025. Casos notificados e estimados (com nowcasting), nível de alerta e incidência.
+**1. Coleta de dengue (InfoDengue API).** Dados semanais de Maringá no período 2020–2025 (314 semanas). Casos notificados e estimados (com nowcasting), nível de alerta e incidência por 100 mil habitantes. A API limita 1 ano por requisição — o coletor itera automaticamente.
 
-**2. Coleta de clima (Open-Meteo Archive API).** Dados diários do reanálise ERA5 nas coordenadas de Maringá: temperatura média/máxima/mínima, precipitação acumulada e umidade relativa.
+**2. Coleta de clima (Open-Meteo Archive API).** Dados diários do reanálise ERA5 nas coordenadas de Maringá: temperatura média/máxima/mínima, precipitação acumulada e umidade relativa. Agregação para semanas epidemiológicas ISO 8601 usando `epiweeks`, respeitando anos com 53 semanas.
 
-**3. Agregação semanal.** Dados climáticos diários são agregados para semanas epidemiológicas (ISO 8601) usando a biblioteca `epiweeks`, que respeita anos com 53 semanas. Agregações apropriadas por variável: chuva é somada, demais variáveis usam média.
+**3. Coleta de satélite (Google Earth Engine).** NDVI do MOD13Q1 (compostos 16 dias, forward-fill para série diária) e LST noturna do MOD11A1 (diário, conversão Kelvin→Celsius). Geometria do município via GAUL (FAO). Agregação semanal reusando a mesma função do clima.
 
-**4. Persistência.** Tudo é gravado em **DuckDB** (banco analítico embutido) em três tabelas: `dengue_raw`, `clima_diario`, `clima_semanal`. Queries SQL ad-hoc disponíveis via função `carregar()`.
+**4. Persistência.** Tudo gravado em DuckDB (banco analítico embutido) em 4 tabelas: `dengue_raw`, `clima_diario`, `clima_semanal`, `satelite_municipio_semanal`. Queries SQL ad-hoc disponíveis via `database.carregar()`.
 
-**5. Cruzamento com lag.** Dengue e clima são unidos por `(ano_epi, semana_epi)` aplicando defasagem temporal configurável (default: 4 semanas). O lag é calculado com `epiweeks` para que a virada de ano respeite o calendário ISO real.
+**5. Cruzamento com lag.** Dengue e clima/satélite são unidos por `(ano_epi, semana_epi)` com defasagem temporal configurável (default: 8 semanas). O lag é calculado com `epiweeks` para que a virada de ano respeite o calendário ISO.
 
-## Exemplo de resultado
+**6. Análise de correlação.** Varredura sistemática de lags 0–8 semanas × todas as variáveis × Pearson + Spearman. Correlação parcial e VIF para validar independência das features. Estabilidade temporal verificada ano a ano.
 
-Dengue de Maringá em 2024 cruzado com clima das 4 semanas anteriores:
+**7. Modelagem preditiva.** Random Forest com walk-forward validation (treina no passado, prevê o futuro — sem data leakage). Três modelos comparados: baseline (média móvel 4 sem), RF só clima, RF clima + autorregressivo. Features finais: `temperature_2m_min_lag8`, `ndvi_lag8`, `casos_lag1..4`.
 
-| ano_epi | semana_epi | casos | temperatura_média_lag4 (°C) | chuva_lag4 (mm) | umidade_lag4 (%) |
-|--------:|-----------:|------:|----------------------------:|----------------:|-----------------:|
-|   2024  |          5 | 1.144 |                       26,66 |             6,4 |             63,9 |
-|   2024  |          6 | 1.430 |                       27,36 |            22,8 |             68,1 |
-|   2024  |          7 | 1.630 |                       26,27 |            49,8 |             79,3 |
-|   2024  |          8 | 1.823 |                       21,86 |            32,4 |             75,7 |
-|   2024  |          9 | 1.867 |                       26,24 |             0,9 |             60,0 |
-|   2024  |         10 | 2.112 |                       27,77 |             7,1 |             60,7 |
+## Estrutura do projeto
 
-Cada linha mostra os casos observados em uma semana, junto com o clima de 4 semanas antes. O padrão sugere que **chuva acumulada e umidade alta nas semanas 3–5 da temporada precedem o pico de casos das semanas 7–10** — consistente com o ciclo de desenvolvimento do vetor.
-
-## Resultados preliminares (Maringá, 2024)
-
-A varredura sistemática de defasagens (lags 0 a 8 semanas) usando `features/correlacoes.py` revela quais variáveis climáticas melhor antecipam a incidência de dengue. Os resultados abaixo correspondem a 52 semanas epidemiológicas de 2024:
-
-| Variável climática | Método | Lag ótimo | r | p-valor | n |
-|---|:---:|:---:|:---:|:---:|:---:|
-| `temperature_2m_min` | Pearson | **6 sem** | **0,593** | < 0,001 | 46 |
-| `relative_humidity_2m_mean` | Spearman | **8 sem** | **0,560** | < 0,001 | 44 |
-| `relative_humidity_2m_mean` | Pearson | 4 sem | 0,471 | 0,0007 | 48 |
-| `temperature_2m_max` | Pearson | 7 sem | 0,350 | 0,018 | 45 |
-| `precipitation_sum` | Pearson | 4 sem | 0,288 | 0,047 | 48 |
-
-**Três achados:**
-
-1. **Temperatura mínima é o melhor preditor linear** (r ≈ 0,59 em lag 6 semanas). Coerente com a biologia do *Aedes aegypti*: noites quentes aceleram o desenvolvimento larval e adulto — uma noite fria mata mosquitos, mas uma média alta com noites frias não compensa.
-
-2. **Umidade tem efeito não-linear monotônico.** Spearman lag 8 (0,56) > Pearson lag 8 (0,42), indicando saturação ou efeito limiar — sinal a ser explorado na Onda 3 com transformações ou modelos não-lineares.
-
-3. **Precipitação total é proxy fraco** (|r| < 0,3). O que provavelmente importa não é chuva acumulada, mas **regularidade e criadouros persistentes** — motivo para feature engineering futuro (chuva de N semanas anteriores, dias com chuva > 5 mm, etc).
-
-A janela de antecedência de 6–8 semanas é compatível com o uso operacional do modelo: tempo suficiente para mobilização de resposta sanitária pela prefeitura.
-
-> Reprodução: `uv run python scripts/smoke_correlacoes.py` — recoleta clima 2024, roda toda a varredura e salva `data/processed/correlacoes_maringa_2024.csv`.
-
-## Stack técnica
-
-**Núcleo:**
-- Python 3.12, [`uv`](https://docs.astral.sh/uv/) (gerenciamento de dependências)
-- [`pydantic`](https://docs.pydantic.dev/) + [`pydantic-settings`](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) (config tipada)
-- [`duckdb`](https://duckdb.org/) (banco analítico embutido)
-- [`pandas`](https://pandas.pydata.org/), [`polars`](https://pola.rs/) (DataFrames)
-- [`epiweeks`](https://epiweeks.readthedocs.io/) (semanas epidemiológicas ISO 8601)
-- [`requests`](https://requests.readthedocs.io/) (HTTP), [`loguru`](https://loguru.readthedocs.io/) (logging)
-
-**Qualidade:**
-- [`pytest`](https://docs.pytest.org/) (44 testes unitários e de integração)
-- [`ruff`](https://docs.astral.sh/ruff/) (lint + format)
-- [`mypy`](https://mypy.readthedocs.io/) (type checking estático)
-
-**Onda 2 (planejada):**
-- [`earthengine-api`](https://developers.google.com/earth-engine), [`geemap`](https://geemap.org/), [`geopandas`](https://geopandas.org/), [`rasterio`](https://rasterio.readthedocs.io/)
-
-**Onda 3 (planejada):**
-- [`scikit-learn`](https://scikit-learn.org/), [`xgboost`](https://xgboost.readthedocs.io/), [`shap`](https://shap.readthedocs.io/)
+```
+observatorio-dengue/
+├── src/observatorio_dengue/
+│   ├── config.py                  # Configuração tipada (Pydantic)
+│   ├── etl/
+│   │   ├── infodengue.py          # Coleta InfoDengue API
+│   │   ├── openmeteo.py           # Coleta Open-Meteo + agregação semanal
+│   │   ├── gee.py                 # Coleta GEE (NDVI + LST_Night)
+│   │   └── database.py            # DuckDB: schema, persistência, queries
+│   └── features/
+│       ├── cruzamento.py          # Cruzamento dengue × clima com lag
+│       └── correlacoes.py         # Pearson, Spearman, varredura de lags
+├── scripts/
+│   ├── coleta_expandida_2020_2025.py   # Coleta completa das 3 fontes
+│   ├── smoke_correlacoes.py            # Smoke test: correlações clima
+│   ├── smoke_correlacoes_v2.py         # Smoke test: clima + satélite
+│   ├── smoke_gee.py                    # Smoke test: GEE end-to-end
+│   ├── analise_ndvi_temperatura.py     # Correlação parcial NDVI × temp
+│   ├── validacao_features.py           # VIF, estabilidade, recomendação
+│   └── modelagem_onda3.py             # RF walk-forward validation
+├── notebooks/
+│   └── visualizacoes_artigo.ipynb      # 7 figuras para publicação (300dpi)
+├── reports/figuras/                    # PNGs exportados do notebook
+├── tests/                             # 73 testes (pytest)
+├── data/processed/                    # DuckDB + CSVs de resultados
+└── pyproject.toml
+```
 
 ## Setup local
 
-**Requisitos:** Python 3.12+, [`uv`](https://docs.astral.sh/uv/getting-started/installation/), Git.
+**Requisitos:** Python 3.12+, [`uv`](https://docs.astral.sh/uv/getting-started/installation/), Git, conta GEE (para satélite).
 
 ```bash
 # Clonar
 git clone https://github.com/220719/observatorio-dengue.git
 cd observatorio-dengue
 
-# Instalar dependências (cria .venv automaticamente)
+# Instalar dependências
 uv sync --all-extras
 uv pip install -e .
 
-# Rodar testes
+# Rodar testes (73 testes)
 uv run pytest -v
 
-# Smoke test do pipeline completo (chama APIs reais)
-uv run python -c "
-from datetime import date
-from observatorio_dengue.config import dengue_config
-from observatorio_dengue.etl.database import criar_schema, salvar_dengue
-from observatorio_dengue.etl.infodengue import coletar_municipio
-criar_schema()
-df = coletar_municipio(geocode=4115200, nome_municipio='Maringá', ano_inicio=2024, ano_fim=2024)
-salvar_dengue(df)
-print(f'{len(df)} semanas de Maringá 2024 inseridas no DuckDB')
-"
+# Coleta completa 2020–2025 (requer APIs ativas)
+uv run python scripts/coleta_expandida_2020_2025.py
+
+# Validação de features
+uv run python scripts/validacao_features.py
+
+# Modelagem preditiva
+uv run python scripts/modelagem_onda3.py
+
+# Visualizações (abrir no VS Code / Jupyter)
+jupyter notebook notebooks/visualizacoes_artigo.ipynb
 ```
 
-## Estrutura do projeto       
+## Stack técnica
+
+| Camada | Tecnologias |
+|---|---|
+| **Linguagem** | Python 3.12, `uv` |
+| **Configuração** | Pydantic + pydantic-settings |
+| **Dados** | DuckDB, Pandas |
+| **Clima** | Open-Meteo Archive API (ERA5) |
+| **Epidemiologia** | InfoDengue API, epiweeks (ISO 8601) |
+| **Sensoriamento remoto** | Google Earth Engine (earthengine-api), MODIS MOD13Q1 + MOD11A1 |
+| **Estatística** | SciPy (Pearson, Spearman, correlação parcial, VIF) |
+| **Modelagem** | scikit-learn (Random Forest, walk-forward) |
+| **Visualização** | Matplotlib, Seaborn (figuras 300dpi) |
+| **Qualidade** | pytest (73 testes), Ruff (lint + format), Loguru |
+| **Ambiente** | WSL2 + Ubuntu 24.04, VS Code |
 
 ## Roadmap
 
-### ✅ Onda 1 — Núcleo dengue × clima (em curso)
+### ✅ Onda 1 — Pipeline dengue × clima
 
 - [x] Setup do ambiente (WSL2, Python 3.12, uv, VS Code)
 - [x] Configuração tipada com Pydantic
@@ -166,29 +215,31 @@ print(f'{len(df)} semanas de Maringá 2024 inseridas no DuckDB')
 - [x] Persistência em DuckDB (`etl/database.py`)
 - [x] Cruzamento com lag temporal (`features/cruzamento.py`)
 - [x] Análise de correlação Pearson + Spearman com varredura de lags (`features/correlacoes.py`)
-- [ ] Notebook de exploração reproduzindo o trabalho original
-- [ ] Heatmap de correlações (lag × variável) para `reports/`
 
-### 🚧 Onda 2 — Sensoriamento remoto (planejada)
+### ✅ Onda 2 — Sensoriamento remoto (MODIS via GEE)
 
-- [ ] Setup Google Earth Engine
-- [ ] Shapefile de bairros de Maringá
-- [ ] Extração de NDVI, NDWI, MNDWI, LST, NDBI por bairro
-- [ ] Tabela `satelite_bairro_semanal`
-- [ ] Mapas choropleth de risco
+- [x] Setup Google Earth Engine (projeto acadêmico `observatorio-dengue-maringa`)
+- [x] Coleta NDVI (MOD13Q1, forward-fill diário → semanal)
+- [x] Coleta LST_Night (MOD11A1, Kelvin → Celsius)
+- [x] Tabela `satelite_municipio_semanal` no DuckDB
+- [x] Matriz de correlações clima + satélite × dengue (126 testes)
+- [x] Correlação parcial: NDVI e temp_min são independentes
+- [x] LST_Night descartada por multicolinearidade (VIF = 7.8)
 
-### 🔮 Onda 3 — Modelo preditivo (planejada)
+### ✅ Onda 3 — Modelo preditivo
 
-- [ ] Engenharia de features (lags múltiplos, indicadores temporais)
-- [ ] Random Forest / XGBoost com validação temporal
-- [ ] Análise SHAP de importância de features
-- [ ] Dashboard Streamlit com previsão de risco
+- [x] Coleta expandida 2020–2025 (314 semanas, 3 fontes)
+- [x] Validação de features com dados expandidos (VIF, estabilidade temporal)
+- [x] Random Forest com walk-forward validation (R² = 0.885)
+- [x] Comparação: RF clima+autoregr supera baseline em todos os anos
+- [x] Notebook com 7 figuras para publicação (300 DPI)
+
 
 ## Sobre o autor
 
 **Anuar Mincache** · Doutor em Física da Matéria Condensada · Cientista de Dados
 
-Pesquisador com formação em pesquisa quantitativa rigorosa (refinamento Rietveld de perovskitas multiferróicas, difração de raios X e nêutrons), aplicando essa base técnica para problemas de saúde pública, dados governamentais e ciência de dados aplicada ao Brasil.
+Pesquisador com formação em pesquisa quantitativa rigorosa (refinamento Rietveld de perovskitas multiferróicas, difração de raios X e nêutrons), aplicando essa base técnica para problemas de saúde pública e ciência de dados aplicada ao Brasil.
 
 **Vínculos institucionais:**
 - Universidade Estadual de Maringá (UEM)
@@ -202,8 +253,9 @@ Pesquisador com formação em pesquisa quantitativa rigorosa (refinamento Rietve
 
 ## Licença
 
-Este projeto é distribuído sob a [Licença MIT](./LICENSE) — você pode usar, modificar, distribuir e usar comercialmente, desde que mantenha o aviso de copyright e a licença.
+[Licença MIT](./LICENSE) — uso livre com atribuição.
 
 ---
 
-*Projeto em desenvolvimento ativo. Issues, sugestões e críticas técnicas são bem-vindas.*
+*Projeto concluído (Ondas 1–3). Issues, sugestões e críticas técnicas são bem-vindas.*
+
