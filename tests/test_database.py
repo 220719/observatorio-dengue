@@ -12,6 +12,7 @@ from observatorio_dengue.etl.database import (
     salvar_clima_diario,
     salvar_clima_semanal,
     salvar_dengue,
+    salvar_satelite_semanal,
 )
 
 
@@ -164,3 +165,54 @@ class TestCarregar:
     def test_query_em_tabela_vazia(self, db_tmp: Path):
         df = carregar("SELECT * FROM dengue_raw", db_tmp)
         assert df.empty
+
+
+class TestSalvarSateliteSemanal:
+    """Testes da função salvar_satelite_semanal."""
+
+    def test_dataframe_vazio_retorna_zero(self, db_tmp: Path):
+        assert salvar_satelite_semanal(pd.DataFrame(), "Maringá", db_tmp) == 0
+
+    def test_colunas_obrigatorias_faltando_raises(self, db_tmp: Path):
+        df = pd.DataFrame({"ndvi": [0.5], "lst_night_c": [22.0]})
+        with pytest.raises(ValueError, match="Colunas obrigatórias faltando"):
+            salvar_satelite_semanal(df, "Maringá", db_tmp)
+
+    def test_inserir_e_recuperar(self, db_tmp: Path):
+        df = pd.DataFrame(
+            {
+                "ano_epi": [2024, 2024, 2024],
+                "semana_epi": [1, 2, 3],
+                "ndvi": [0.77, 0.77, 0.75],
+                "lst_night_c": [22.47, 23.50, 22.28],
+                "dias_validos": [7, 7, 7],
+            }
+        )
+        n = salvar_satelite_semanal(df, "Maringá", db_tmp)
+        assert n == 3
+
+        resultado = carregar(
+            "SELECT municipio, ano_epi, semana_epi, ndvi, lst_night_c, "
+            "dias_validos FROM satelite_municipio_semanal ORDER BY semana_epi",
+            db_tmp,
+        )
+        assert len(resultado) == 3
+        assert resultado.iloc[0]["municipio"] == "Maringá"
+        assert resultado.iloc[0]["ndvi"] == pytest.approx(0.77)
+        assert resultado.iloc[1]["lst_night_c"] == pytest.approx(23.50)
+        assert resultado.iloc[2]["dias_validos"] == 7
+
+    def test_colunas_opcionais_ausentes_viram_null(self, db_tmp: Path):
+        """Se só vier ano_epi e semana_epi, ndvi/lst/dias_validos viram NULL."""
+        df = pd.DataFrame({"ano_epi": [2024], "semana_epi": [10]})
+        n = salvar_satelite_semanal(df, "Maringá", db_tmp)
+        assert n == 1
+
+        resultado = carregar(
+            "SELECT ndvi, lst_night_c, dias_validos "
+            "FROM satelite_municipio_semanal",
+            db_tmp,
+        )
+        assert pd.isna(resultado.iloc[0]["ndvi"])
+        assert pd.isna(resultado.iloc[0]["lst_night_c"])
+        assert pd.isna(resultado.iloc[0]["dias_validos"])

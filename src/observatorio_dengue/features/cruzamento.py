@@ -141,10 +141,12 @@ def cruzar_dengue_clima(
     ).drop(columns=["ano_target", "semana_target"])
 
     casos_total = len(resultado)
-    casos_com_clima = resultado[f"temperature_2m_mean{sufixo}"].notna().sum()
+    colunas_lag = [c for c in resultado.columns if c.endswith(sufixo) and c != f"dias_validos{sufixo}"]
+    col_ref = colunas_lag[0] if colunas_lag else None
+    casos_com_dados = resultado[col_ref].notna().sum() if col_ref else 0
     logger.info(
         f"Cruzamento (lag={lag}): {casos_total} semanas de dengue, "
-        f"{casos_com_clima} com clima correspondente"
+        f"{casos_com_dados} com variáveis correspondentes (ref: '{col_ref}')"
     )
 
     return resultado

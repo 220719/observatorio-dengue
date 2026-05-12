@@ -9,7 +9,7 @@ NÃO persiste em DuckDB — isso fica para a próxima etapa.
 
 from datetime import date
 
-from observatorio_dengue.etl import gee, openmeteo
+from observatorio_dengue.etl import database, gee, openmeteo
 
 PROJECT_ID = "observatorio-dengue-maringa"
 MUNICIPIO = "Maringá"
@@ -67,6 +67,21 @@ def main() -> None:
     print("=" * 70)
     cols_numericas = df_semanal.select_dtypes(include="number").columns
     print(df_semanal[cols_numericas].describe().round(3).to_string())
+
+    # 6) Persistir no DuckDB
+    print("\n[BÔNUS] Persistindo no DuckDB...")
+    database.criar_schema()  # idempotente — cria tabela se não existir
+    n_salvas = database.salvar_satelite_semanal(df_semanal, municipio=MUNICIPIO)
+    print(f"      {n_salvas} linhas salvas em satelite_municipio_semanal")
+
+    # Confirma lendo de volta
+    df_check = database.carregar(
+        "SELECT COUNT(*) AS n, AVG(ndvi) AS ndvi_avg, "
+        "AVG(lst_night_c) AS lst_avg FROM satelite_municipio_semanal"
+    )
+    print(f"      Confirmação: {df_check.iloc[0]['n']} linhas, "
+          f"NDVI avg={df_check.iloc[0]['ndvi_avg']:.3f}, "
+          f"LST avg={df_check.iloc[0]['lst_avg']:.2f}°C")
 
     print("\n✅ Smoke test OK — módulo gee.py funcional end-to-end.")
 

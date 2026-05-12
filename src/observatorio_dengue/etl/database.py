@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS clima_semanal (
     dias_validos INTEGER,
     data_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS satelite_municipio_semanal (
+    municipio VARCHAR NOT NULL,
+    ano_epi INTEGER NOT NULL,
+    semana_epi INTEGER NOT NULL,
+    ndvi DOUBLE,
+    lst_night_c DOUBLE,
+    dias_validos INTEGER,
+    data_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -284,3 +294,64 @@ def carregar(query: str, db_path: Path | None = None) -> pd.DataFrame:
     """
     with get_connection(db_path) as con:
         return con.execute(query).fetchdf()
+
+def salvar_satelite_semanal(
+    df: pd.DataFrame,
+    municipio: str,
+    db_path: Path | None = None,
+) -> int:
+    """Persiste DataFrame de índices de satélite em satelite_municipio_semanal.
+
+    Args:
+        df: DataFrame de etl.gee + openmeteo.agregar_para_semana_epidemiologica().
+            Deve conter ao menos: ano_epi, semana_epi.
+            Colunas opcionais reconhecidas: ndvi, lst_night_c, dias_validos.
+        municipio: Nome do município (gravado em todas as linhas).
+        db_path: Path opcional para o banco.
+
+    Returns:
+        Número de linhas inseridas.
+
+    Raises:
+        ValueError: Se colunas obrigatórias estiverem faltando.
+    """
+    if df.empty:
+        logger.warning("DataFrame de satélite vazio, nada a salvar")
+        return 0
+
+    colunas_obrigatorias = {"ano_epi", "semana_epi"}
+    faltando = colunas_obrigatorias - set(df.columns)
+    if faltando:
+        raise ValueError(f"Colunas obrigatórias faltando: {faltando}")
+
+    df_preparado = df.copy()
+    df_preparado["municipio"] = municipio
+
+    # Garante que colunas opcionais existam (NULL se não vieram)
+    for col in ("ndvi", "lst_night_c", "dias_validos"):
+        if col not in df_preparado.columns:
+            df_preparado[col] = None
+
+    colunas_destino = [
+        "municipio",
+        "ano_epi",
+        "semana_epi",
+        "ndvi",
+        "lst_night_c",
+        "dias_validos",
+    ]
+    df_preparado = df_preparado[colunas_destino]
+
+    with get_connection(db_path) as con:
+        con.register("df_temp", df_preparado)
+        con.execute(
+            f"INSERT INTO satelite_municipio_semanal ({', '.join(colunas_destino)}) "
+            f"SELECT * FROM df_temp"
+        )
+        con.unregister("df_temp")
+
+    logger.info(
+        f"Satélite semanal: {len(df_preparado)} linhas inseridas em "
+        f"satelite_municipio_semanal"
+    )
+    return len(df_preparado)
